@@ -14,11 +14,11 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r setup}
+```{r setup, eval=FALSE}
 library(SesamThesis)
 ```
 
-We load the already classified behavioural data. There are single files per sensor. Here we combine the individual cow sensor data into one large dataset.  
+We load the already classified behavioral data. There are single files per sensor. Here we combine the individual cow sensor data into one large dataset.  
 ```{r}
 s_data_input_dir <- "/qualstorzws01/data_projekte/projekte/sesam/data/UL/GW50/output"
 vec_input_files <- list.files(path = s_data_input_dir, full.names = TRUE)

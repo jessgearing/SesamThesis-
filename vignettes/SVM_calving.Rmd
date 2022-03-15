@@ -1,0 +1,418 @@
+---
+title: "SVM_calving"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+Load packages
+```{r}
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(DMwR)
+library(ROSE)
+```
+
+Load and filter data
+```{r}
+load("~/sesam/MSc_project/Final_results/Data/df_prep50_health.RData")
+df_prep <- df_prep50 %>%
+  filter(Event == "no_event" | Event == "Pre_calving")
+
+df_prep <- df_prep %>%
+  select(-SENSOR_MAC, - DAY)
+
+
+df_prep$Event <- as.factor(df_prep$Event)
+table(df_prep$Event)
+```
+
+#Training control: cross validation, 3 repeats
+```{r}
+trainSetControl <- trainControl(method = "repeatedcv",
+                                number = 10,
+                                repeats = 3,
+                                search = "grid")
+```
+
+# 80:20 dataset
+## Test/train split
+```{r}
+set.seed(100)
+indexes <- createDataPartition(df_prep$Event,
+                               times = 1,
+                               p = 0.8,
+                               list = FALSE)
+
+trainingSet <- df_prep[indexes,]
+testingSet <- df_prep[-indexes,]
+
+trainingSet <- na.omit(trainingSet)
+testingSet <- na.omit(testingSet)
+
+table(trainingSet$Event)
+table(testingSet$Event)
+```
+
+## Data sampling for training data
+```{r}
+#Random under sampling
+rus_train  <- downSample(x = trainingSet[,-1],
+                                   y = trainingSet$Event,
+                                   yname = "Event")
+table(rus_train$Event)
+save(rus_train, file = "~/sesam/MSc_project/Final_results/Data/SVM/rus_train.RData")
+
+#Random over sampling
+ros_train <- upSample(x = trainingSet[,-1],
+                    y = trainingSet$Event,
+                    yname = "Event")
+table(ros_train$Event)
+save(ros_train, file = "~/sesam/MSc_project/Final_results/Data/SVM/ros_train.RData")
+
+
+#SMOTE
+str(trainingSet)
+trainingSet$Event <- as.factor(trainingSet$Event)
+trainingSet <- as.data.frame(trainingSet)
+SMOTE_train <- SMOTE(Event ~., trainingSet, perc.over = 1000)
+table(SMOTE_train$Event)
+save(SMOTE_train, file = "~/sesam/MSc_project/Final_results/Data/SVM/SMOTE_train.RData")
+
+
+#ROSE
+ROSE_train <- ROSE(Event ~ ., data = trainingSet)$data
+table(ROSE_train$Event)
+save(ROSE_train, file = "~/sesam/MSc_project/Final_results/Data/SVM/ROSE_train.RData")
+
+```
+
+##Linear SVM 
+###Tuning grid for selecting C parameter
+```{r}
+tuningGrid <- expand.grid(C = seq(0.1,2, length = 20))
+```
+
+###Model training 
+```{r}
+set.seed(100)
+SVM_unbalanced_lin <- train(Event ~ ., data = trainingSet,
+                  method = "svmLinear",
+                  tuneGrid = tuningGrid,
+                  trControl = trainSetControl)
+saveRDS(SVM_unbalanced_lin, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVMlin_80_unbalanced.rds")
+
+
+### random under sampling
+set.seed(100)
+SVM_rus_lin <- train(Event ~ ., data = rus_train,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+saveRDS(SVM_rus_lin, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVMlin_80_rus.rds")
+
+
+### random over sampling
+set.seed(100)
+SVM_ros_lin <- train(Event ~ ., data = ros_train,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+saveRDS(SVM_ros_lin, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVMlin_80_ros.rds")
+
+
+### SMOTE
+set.seed(100)
+SVM_SMOTE_lin <- train(Event ~ ., data = SMOTE_train,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+saveRDS(SVM_SMOTE_lin, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVMlin_80_SMOTE.rds")
+### ROSE
+set.seed(100)
+SVM_ROSE_lin <- train(Event ~ ., data = ROSE_train,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+saveRDS(SVM_ROSE_lin, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVMlin_80_ROSE.rds")
+```
+
+###Predictions using testing data 
+```{r}
+pred_SVM_unbalanced <- predict(SVM_unbalanced_lin, testingSet)
+predict_SVM_rus <- predict(SVM_rus_lin, testingSet)
+predict_SVM_ros <- predict(SVM_ros_lin, testingSet)
+predict_SVM_SMOTE <- predict(SVM_SMOTE_lin, testingSet)
+predict_SVM_ROSE <- predict(SVM_ROSE_lin, testingSet)
+```
+
+###Confusion matrix 
+```{r}
+confusionSVM_unbalanced <- confusionMatrix(pred_SVM_unbalanced, positive = "Pre_calving", mode = "everything", testingSet$Event)
+confusionSVM_unbalanced
+confusionSVM_rus <- confusionMatrix(predict_SVM_rus, positive = "Pre_calving", mode = "everything", testingSet$Event)
+confusionSVM_rus
+confusionSVM_ros <- confusionMatrix(predict_SVM_ros, positive = "Pre_calving", mode = "everything", testingSet$Event)
+confusionSVM_ros
+confusionSVM_SMOTE <- confusionMatrix(predict_SVM_SMOTE, positive = "Pre_calving", mode = "everything", testingSet$Event)
+confusionSVM_SMOTE
+confusionSVM_ROSE <- confusionMatrix(predict_SVM_ROSE, positive = "Pre_calving", mode = "everything", testingSet$Event)
+confusionSVM_ROSE
+```
+
+#70:30 data split 
+## Train/test data 
+```{r}
+set.seed(100)
+indexes2 <- createDataPartition(df_prep$Event,
+                                times = 1,
+                                p = 0.7,
+                                list = FALSE)
+
+trainingSet2 <- df_prep[indexes2,]
+testingSet2 <- df_prep[-indexes2,]
+
+trainingSet2 <- na.omit(trainingSet2)
+testingSet2 <- na.omit(testingSet2)
+
+table(trainingSet2$Event)
+table(testingSet2$Event)
+```
+
+##Data sampling
+```{r}
+### Random under sampling
+set.seed(100)
+rus_train2  <- downSample(x = trainingSet2[,-1],
+                         y = trainingSet2$Event,
+                         yname = "Event")
+table(rus_train2$Event)
+save(rus_train2, file = "~/sesam/MSc_project/Final_results/Data/SVM/rus_train2.RData")
+
+### Random over sampling
+set.seed(100)
+ros_train2 <- upSample(x = trainingSet2[,-1],
+                      y = trainingSet2$Event,
+                      yname = "Event")
+table(ros_train2$Event)
+save(ros_train2, file = "~/sesam/MSc_project/Final_results/Data/SVM/ros_train2.RData")
+
+### SMOTE
+set.seed(100)
+str(trainingSet2)
+trainingSet2$Event <- as.factor(trainingSet2$Event)
+trainingSet2 <- as.data.frame(trainingSet2)
+SMOTE_train2 <- SMOTE(Event ~., trainingSet2, perc.over = 1000)
+table(SMOTE_train2$Event)
+save(SMOTE_train2, file = "~/sesam/MSc_project/Final_results/Data/SVM/SMOTE_train2.RData")
+
+### ROSE
+set.seed(100)
+ROSE_train2 <- ROSE(Event ~ ., data = trainingSet2)$data
+table(ROSE_train2$Event)
+save(ROSE_train2, file = "~/sesam/MSc_project/Final_results/Data/SVM/ROSE_train2.RData")
+```
+
+##SVM 
+### Model training 
+```{r}
+### unbalanced
+set.seed(100)
+SVM_unbalanced_lin_70 <- train(Event ~ ., data = trainingSet2,
+                        method = "svmLinear",
+                        tuneGrid = tuningGrid,
+                        trControl = trainSetControl)
+saveRDS(SVM_unbalanced_lin_70, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_unbalanced_lin_70.rds")
+
+### random under sampling
+set.seed(100)
+SVM_rus_lin_70 <- train(Event ~ ., data = rus_train2,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+
+saveRDS(SVM_rus_lin_70, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_rus_lin_70.rds")
+
+
+### random over sampling
+set.seed(100)
+SVM_ros_lin_70 <- train(Event ~ ., data = ros_train2,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+
+saveRDS(SVM_ros_lin_70, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_ros_lin_70.rds")
+
+
+### SMOTE
+set.seed(100)
+SVM_SMOTE_lin_70 <- train(Event ~ ., data = SMOTE_train2,
+                   method = "svmLinear",
+                   tuneGrid = tuningGrid,
+                   trControl = trainSetControl)
+saveRDS(SVM_SMOTE_lin_70, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_SMOTE_lin_70.rds")
+
+
+### ROSE
+set.seed(100)
+SVM_ROSE_lin_70 <- train(Event ~ ., data = ROSE_train2,
+                  method = "svmLinear",
+                  tuneGrid = tuningGrid,
+                  trControl = trainSetControl)
+saveRDS(SVM_ROSE_lin_70, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_ROSE_lin_70.rds")
+```
+
+### Predictions of test data 
+```{r}
+pred_SVM_unbalanced_lin_70 <- predict(SVM_unbalanced_lin_70, testingSet2)
+predict_SVM_rus_lin_70 <- predict(SVM_rus_lin_70, testingSet2)
+predict_SVM_ros_lin_70 <- predict(SVM_ros_lin_70, testingSet2)
+predict_SVM_SMOTE_lin_70 <- predict(SVM_SMOTE_lin_70, testingSet2)
+predict_SVM_ROSE_lin_70 <- predict(SVM_ROSE_lin_70, testingSet2)
+```
+
+### Confusion matrix
+```{r}
+confusionSVM_unbalanced_lin_70 <- confusionMatrix(pred_SVM_unbalanced_lin_70, positive = "Pre_calving", mode = "everything", testingSet2$Event)
+confusionSVM_unbalanced_lin_70
+confusionSVM_rus_lin_70 <- confusionMatrix(predict_SVM_rus_lin_70, positive = "Pre_calving", mode = "everything", testingSet2$Event)
+confusionSVM_rus_lin_70
+confusionSVM_ros_lin_70 <- confusionMatrix(predict_SVM_ros_lin_70, positive = "Pre_calving", mode = "everything", testingSet2$Event)
+confusionSVM_ros_lin_70
+confusionSVM_SMOTE_lin_70 <- confusionMatrix(predict_SVM_SMOTE_lin_70, positive = "Pre_calving", mode = "everything", testingSet2$Event)
+confusionSVM_SMOTE_lin_70
+confusionSVM_ROSE_lin_70 <- confusionMatrix(predict_SVM_ROSE_lin_70, positive = "Pre_calving", mode = "everything", testingSet2$Event)
+confusionSVM_ROSE_lin_70
+```
+
+# 60:40 data split
+## train/test data 
+```{r}
+set.seed(100)
+indexes3 <- createDataPartition(df_prep$Event,
+                                times = 1,
+                                p = 0.6,
+                                list = FALSE)
+
+trainingSet3 <- df_prep[indexes3,]
+testingSet3 <- df_prep[-indexes3,]
+
+trainingSet3 <- na.omit(trainingSet3)
+testingSet3 <- na.omit(testingSet3)
+
+table(trainingSet3$Event)
+table(testingSet3$Event)
+```
+
+## data sampling
+```{r}
+### Random under sampling
+rus_train3  <- downSample(x = trainingSet3[,-1],
+                         y = trainingSet3$Event,
+                         yname = "Event")
+table(rus_train3$Event)
+save(rus_train3, file = "~/sesam/MSc_project/Final_results/Data/SVM/rus_train3.RData")
+
+### Random over sampling
+ros_train3 <- upSample(x = trainingSet3[,-1],
+                      y = trainingSet3$Event,
+                      yname = "Event")
+table(ros_train3$Event)
+save(ros_train3, file = "~/sesam/MSc_project/Final_results/Data/SVM/ros_train3.RData")
+
+### SMOTE
+str(trainingSet3)
+trainingSet3$Event <- as.factor(trainingSet3$Event)
+trainingSet3 <- as.data.frame(trainingSet3)
+smote_train3 <- SMOTE(Event ~., trainingSet3, perc.over = 1000)
+table(smote_train3$Event)
+save(smote_train3, file = "~/sesam/MSc_project/Final_results/Data/SVM/smote_train3.RData")
+table(smote_train3)
+
+### ROSE
+rose_train3 <- ROSE(Event ~ ., data = trainingSet3)$data
+table(rose_train3$Event)
+save(rose_train3, file = "~/sesam/MSc_project/Final_results/Data/SVM/rose_train3.RData")
+```
+
+##SVM
+### Model training
+```{r}
+### unbalanced
+set.seed(100)
+SVM_unbalanced_lin60 <- train(Event ~ ., data = trainingSet3,
+                        method = "svmLinear",
+                        tuneGrid = tuningGrid,
+                        trControl = trainSetControl)
+saveRDS(SVM_unbalanced_lin60, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_unbalanced_lin60.rds")
+
+
+### random under sampling
+set.seed(100)
+SVM_rus_lin60 <- train(Event ~ ., data = rus_train3,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+saveRDS(SVM_rus_lin60, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_rus_lin60.rds")
+
+
+### random over sampling
+set.seed(100)
+SVM_ros_lin60 <- train(Event ~ ., data = ros_train3,
+                 method = "svmLinear",
+                 tuneGrid = tuningGrid,
+                 trControl = trainSetControl)
+saveRDS(SVM_ros_lin60, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_ros_lin60.rds")
+
+
+### SMOTE
+set.seed(100)
+SVM_SMOTE_lin60 <- train(Event ~ ., data = smote_train3,
+                   method = "svmLinear",
+                   tuneGrid = tuningGrid,
+                   trControl = trainSetControl)
+saveRDS(SVM_SMOTE_lin60, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_SMOTE_lin60.rds")
+
+
+### ROSE
+set.seed(100)
+SVM_ROSE_lin60 <- train(Event ~ ., data = rose_train3,
+                  method = "svmLinear",
+                  tuneGrid = tuningGrid,
+                  trControl = trainSetControl)
+saveRDS(SVM_ROSE_lin60, file = "~/sesam/MSc_project/Final_results/Data/SVM/SVM_ROSE_lin60.rds")
+```
+
+### Predictions of test data 
+```{r}
+pred_SVM_unbalanced_lin60 <- predict(SVM_unbalanced_lin60, testingSet3)
+predict_SVM_rus_lin60 <- predict(SVM_rus_lin60, testingSet3)
+predict_SVM_ros_lin60 <- predict(SVM_ros_lin60, testingSet3)
+predict_SVM_SMOTE_lin60 <- predict(SVM_SMOTE_lin60, testingSet3)
+predict_SVM_ROSE_lin60 <- predict(SVM_ROSE_lin60, testingSet3)
+```
+
+### Confusion matrix 
+```{r}
+confusionSVM_unbalanced_lin60 <- confusionMatrix(pred_SVM_unbalanced_lin60, positive = "Pre_calving", mode = "everything", testingSet3$Event)
+confusionSVM_unbalanced_lin60
+confusionSVM_rus_lin60 <- confusionMatrix(predict_SVM_rus_lin60, positive = "Pre_calving", mode = "everything", testingSet3$Event)
+confusionSVM_rus_lin60
+confusionSVM_ros_lin60 <- confusionMatrix(predict_SVM_ros_lin60, positive = "Pre_calving", mode = "everything", testingSet3$Event)
+confusionSVM_ros_lin60
+confusionSVM_SMOTE_lin60 <- confusionMatrix(predict_SVM_SMOTE_lin60, positive = "Pre_calving", mode = "everything", testingSet3$Event)
+confusionSVM_SMOTE_lin60
+confusionSVM_ROSE_lin60 <- confusionMatrix(predict_SVM_ROSE_lin60, positive = "Pre_calving", mode = "everything", testingSet3$Event)
+confusionSVM_ROSE_lin60
+```
+

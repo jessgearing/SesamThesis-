@@ -1,0 +1,228 @@
+---
+title: "Pre_process_machine_learing"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Pre_process_machine_learing}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+load packages 
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(GGally)
+library(reshape2)
+```
+
+Load and prepare data 
+```{r}
+load("~/sesam/MSc_project/Final_results/Data/standardised_df.RData")
+load("~/sesam/MSc_project/Final_results/Data/Health_GW50.RData")
+
+tbl_hd_gw50 <- Health_GW50
+tbl_hd_gw50 <- tbl_hd_gw50 %>%
+  select(-Other_event)
+
+tbl_event_gw50 <- tbl_hd_gw50 %>%
+  pivot_longer(!SENSOR_MAC,
+               names_to = "event",
+               values_to = "date",
+               values_drop_na = TRUE)
+tbl_event_gw50$date <- as.Date(tbl_event_gw50$date)
+```
+
+Create event column and fill as a base with "no_event".
+Add each event to the data frame (for insemination, we rename this to be included in the oestrus data). We name the dates before oestrus and calving, pre-oestrus and pre-calving.
+```{r}
+standardised_df$Event <- ("no_event")
+for (idx in 1:nrow(standardised_df)) {
+  sensor <- standardised_df$SENSOR_MAC[idx]
+  vec_event_rows <- which(tbl_event_gw50$SENSOR_MAC == sensor)
+  day_current_activity <- standardised_df$DAY[idx]
+  tbl_event_current_sensor <- tbl_event_gw50[vec_event_rows,]
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(date == as.Date(day_current_activity))
+  standardised_df$Event[idx] <- with((standardised_df[idx,]), ifelse(as.Date(day_current_activity) %in% tbl_event_current_sensor$date, tbl_event_current_sensor$event, Event))
+  if(standardised_df$Event[idx] == "In_heat") {
+    standardised_df$Event[idx] <- "Oestrus"
+  }
+  if(standardised_df$Event[idx] == "Insemination") {
+         standardised_df$Event[idx] <- "Oestrus"
+  }
+}
+
+### We create another event for "In_heat" on the date before the observed heat. This is because we want to use the day before observation for later classification.
+for (idx in 1:nrow(standardised_df)) {
+  sensor <- standardised_df$SENSOR_MAC[idx]
+  vec_event_rows <- which(tbl_event_gw50$SENSOR_MAC == sensor) #which rows in the health dataset have the same sensor ID
+  day_current_activity <- standardised_df$DAY[idx] #what is the date of the row idx
+  tbl_event_current_sensor <- tbl_event_gw50[vec_event_rows,] #show the health df only for the select sensor
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(event == "In_heat" | event == "Insemination") #only show the rows for "in_heat"
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(date >= as.Date(day_current_activity) -1 & date <= as.Date(day_current_activity) +1) #if there is more than one date for in_heat, only show the one that is around the time of the date on the idx row
+  if (nrow(tbl_event_current_sensor) == 0) next
+  heat_date <- as.Date(tbl_event_current_sensor$date) - 1
+  if (standardised_df$Event[idx] == "no_event") {
+    standardised_df$Event[idx] <- with((standardised_df[idx,]), ifelse(as.Date(day_current_activity) == heat_date, "Pre_oestrus", standardised_df$Event))
+  }
+}
+
+### We create another event for "Pre-calving" for the day before calving so that we can use this as the date for classification.
+for (idx in 1:nrow(standardised_df)) {
+  sensor <- standardised_df$SENSOR_MAC[idx]
+  vec_event_rows <- which(tbl_event_gw50$SENSOR_MAC == sensor) #which rows in the health dataset have the same sensor ID
+  day_current_activity <- standardised_df$DAY[idx] #what is the date of the row idx
+  tbl_event_current_sensor <- tbl_event_gw50[vec_event_rows,] #show the health df only for the select sensor
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(event == "Calving") #only show the rows for "calving"
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(date >= as.Date(day_current_activity) -1 & date <= as.Date(day_current_activity) +1) #if there is more than one date for in_heat, only show the one that is around the time of the date on the idx row
+  if (nrow(tbl_event_current_sensor) == 0) next
+  calving_date <- unique(as.Date(tbl_event_current_sensor$date)) - 1
+  if (standardised_df$Event[idx] == "no_event") {
+    standardised_df$Event[idx] <- with((standardised_df[idx,]), ifelse(as.Date(day_current_activity) == calving_date, "Pre_calving", standardised_df$Event))
+  }
+}
+```
+
+We then remova all data pertaining to a health event e.g. mastitis, and the 7 days either side of this event
+```{r}
+for (idx in 1:nrow(standardised_df)) {
+  sensor <- standardised_df$SENSOR_MAC[idx]
+  vec_event_rows <- which(tbl_event_gw50$SENSOR_MAC == sensor) #which rows in the health dataset have the same sensor ID
+  day_current_activity <- standardised_df$DAY[idx] #what is the date of the row idx
+  tbl_event_current_sensor <- tbl_event_gw50[vec_event_rows,] #show the health df only for the select sensor
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(event == "Mastitis") #only show the rows for "calving"
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(date >= as.Date(day_current_activity) -1 & date <= as.Date(day_current_activity) +1) #if there is more than one date for in_heat, only show the one that is around the time of the date on the idx row
+  if (nrow(tbl_event_current_sensor) == 0) next
+  calving_date <- unique(as.Date(tbl_event_current_sensor$date))
+  if (standardised_df$Event[idx] == "no_event") {
+    standardised_df$Event[idx] <- with((standardised_df[idx,]), ifelse((as.Date(day_current_activity) < calving_date + 7 | as.Date(day_current_activity) > calving_date - 7), "Mastitis", standardised_df$Event))
+  }
+}
+
+for (idx in 1:nrow(standardised_df)) {
+  sensor <- standardised_df$SENSOR_MAC[idx]
+  vec_event_rows <- which(tbl_event_gw50$SENSOR_MAC == sensor) #which rows in the health dataset have the same sensor ID
+  day_current_activity <- standardised_df$DAY[idx] #what is the date of the row idx
+  tbl_event_current_sensor <- tbl_event_gw50[vec_event_rows,] #show the health df only for the select sensor
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(event == "Endometritis") #only show the rows for "calving"
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(date >= as.Date(day_current_activity) -1 & date <= as.Date(day_current_activity) +1) #if there is more than one date for in_heat, only show the one that is around the time of the date on the idx row
+  if (nrow(tbl_event_current_sensor) == 0) next
+  calving_date <- unique(as.Date(tbl_event_current_sensor$date))
+  if (standardised_df$Event[idx] == "no_event") {
+    standardised_df$Event[idx] <- with((standardised_df[idx,]), ifelse((as.Date(day_current_activity) < calving_date + 7 | as.Date(day_current_activity) > calving_date - 7), "Endometritis", standardised_df$Event))
+  }
+}
+
+for (idx in 1:nrow(standardised_df)) {
+  sensor <- standardised_df$SENSOR_MAC[idx]
+  vec_event_rows <- which(tbl_event_gw50$SENSOR_MAC == sensor) #which rows in the health dataset have the same sensor ID
+  day_current_activity <- standardised_df$DAY[idx] #what is the date of the row idx
+  tbl_event_current_sensor <- tbl_event_gw50[vec_event_rows,] #show the health df only for the select sensor
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(event == "Other") #only show the rows for "calving"
+  tbl_event_current_sensor <- tbl_event_current_sensor %>%
+    filter(date >= as.Date(day_current_activity) -1 & date <= as.Date(day_current_activity) +1) #if there is more than one date for in_heat, only show the one that is around the time of the date on the idx row
+  if (nrow(tbl_event_current_sensor) == 0) next
+  calving_date <- unique(as.Date(tbl_event_current_sensor$date))
+  if (standardised_df$Event[idx] == "no_event") {
+    standardised_df$Event[idx] <- with((standardised_df[idx,]), ifelse((as.Date(day_current_activity) < calving_date + 7 | as.Date(day_current_activity) > calving_date - 7), "Other", standardised_df$Event))
+  }
+}
+```
+
+Visualisation of behavioural data: boxplots 
+```{r}
+df_prep <- standardised_df %>%
+  group_by() %>%
+  pivot_wider(names_from = series, values_from = standarized_value)
+df_prep50 <<- df_prep
+
+save(df_prep50, file = "~/sesam/MSc_project/Final_results/Data/df_prep50_health.RData")
+
+
+#Look at boxplots of events and behaviours before doing the test for significance
+load("~/sesam/MSc_project/Final_results/Data/df_prep50_health.RData")
+boxplot_events_calving <- df_prep50 %>%
+  filter(Event == "no_event" | Event == "Pre_calving")
+
+boxplot_events_calving <- melt(subset(boxplot_events_calving,
+                              select=c("SENSOR_MAC","DAY",
+                                       "Lying",
+                                       "Standing",
+                                       "Walking",
+                                       "Eating",
+                                       "Ruminating",
+                                       "Event")),
+                       id.vars = c("SENSOR_MAC","DAY", "Event"),
+                       variable.name = 'series')
+
+events_calving <- ggplot(data = boxplot_events_calving, aes(x=series, y=value)) + geom_boxplot(outlier.shape = NA, aes(fill=Event)) +
+  xlab("Behaviour") + ylab("Standardised value") + ylim (-5, 10)
+events_calving
+ggsave(events_calving, file = "~/sesam/MSc_project/Final_results/plots/pre_calving_boxplot.pdf")
+
+
+boxplot_events_oestrus <- df_prep50 %>%
+  filter(Event == "no_event" | Event == "Pre_oestrus")
+
+
+boxplot_events_oestrus <- melt(subset(boxplot_events_oestrus,
+                              select=c("SENSOR_MAC","DAY",
+                                       "Lying",
+                                       "Standing",
+                                       "Walking",
+                                       "Eating",
+                                       "Ruminating",
+                                       "Event")),
+                       id.vars = c("SENSOR_MAC","DAY", "Event"),
+                       variable.name = 'series')
+
+boxplot_events_oestrus$Event <- factor(boxplot_events_oestrus$Event,
+                         levels = c("no_event", "Pre_oestrus"))
+
+
+events_oestrus <- ggplot(data = boxplot_events_oestrus, aes(x=series, y=value)) + geom_boxplot(outlier.shape = NA,aes(fill=Event)) +
+  xlab("Behaviour") + ylab("Standardised value") + ylim (-5, 10)
+events_oestrus
+ggsave(events_oestrus, file = "~/sesam/MSc_project/Final_results/plots/pre_oestrus_boxplot.pdf")
+```
+
+two-sample t-test
+```{r}
+boxplot_events_oestrus <- df_prep50 %>%
+  filter(Event == "no_event" | Event == "Pre_oestrus")
+
+
+Lying_oestrus <- t.test(Lying ~ Event, data = boxplot_events_oestrus, var.equal = TRUE, paired = FALSE)
+Standing_oestrus <- t.test(Standing ~ Event, data = boxplot_events_oestrus, var.equal = TRUE, paired = FALSE)
+Walking_oestrus <- t.test(Walking ~ Event, data = boxplot_events_oestrus, var.equal = TRUE, paired = FALSE)
+Eating_oestrus <- t.test(Eating ~ Event, data = boxplot_events_oestrus, var.equal = TRUE, paired = FALSE)
+Ruminating_oestrus <- t.test(Ruminating ~ Event, data = boxplot_events_oestrus, var.equal = TRUE, paired = FALSE)
+
+
+boxplot_events_calving <- df_prep50 %>%
+  filter(Event == "no_event" | Event == "Pre_calving")
+
+Lying_calving <- t.test(Lying ~ Event, data = boxplot_events_calving, var.equal = TRUE, paired = FALSE)
+Standing_calving <- t.test(Standing ~ Event, data = boxplot_events_calving, var.equal = TRUE, paired = FALSE)
+Walking_calving <- t.test(Walking ~ Event, data = boxplot_events_calving, var.equal = TRUE, paired = FALSE)
+Eating_calving <- t.test(Eating ~ Event, data = boxplot_events_calving, var.equal = TRUE, paired = FALSE)
+Ruminating_calving <- t.test(Ruminating ~ Event, data = boxplot_events_calving, var.equal = TRUE, paired = FALSE)
+```
+
